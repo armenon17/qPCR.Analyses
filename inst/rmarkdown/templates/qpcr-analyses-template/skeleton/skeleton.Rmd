@@ -1,18 +1,163 @@
 ---
-title: "Template Title"
+title: "qPCR Analyses"
 author: "Your Name"
 date: "The Date"
 output: output_format
 ---
 
+<style type="text/css">
+options(width = 60)
+
+<style type="text/css">
+
+h1.title {
+  font-size: 24px;
+  text-align: center
+}
+
+h2,h3,h4 {
+  font-size: 18px;
+  text-align: center
+}
+
+body,td {
+   font-size: 14px; 
+   font-family: "Times New Roman"
+}
+
+code.r {
+  font-size: 12px;
+  font-family: "Times New Roman"
+}
+pre {
+  font-size: 12px
+  font-family: "Times New Roman"
+}
+
+</style>
+<style type="text/css">
+options(width = 10)
+
+</style>
+
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+library(rprojroot)
+rootdir <- toString(find_rstudio_root_file())
+knitr::opts_knit$set(root.dir = (rootdir))
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+dir.create("Plots and Images")
 ```
 
-## Adding an RMarkdown Template
+This is to graph qPCR data that you have generated.This is to analyze data based off of the sheet you get from the 7500 fast qPCR machine we use in the Tobin Lab. 
 
-This file is what a user will see when they select your template. Make sure that you update the fields in the yaml header. In particular you will want to update the `output` field to whatever format your template requires.
+First let's make sure we have the programs we need and are in the right working directory. 
 
-This is a good place to demonstrate special features that your template provides. Ideally it should knit out-of-the-box, or at least contain clear instructions as to what needs changing.
+```{r program, include=FALSE}
+library(ggplot2) #read ggplot2 for graphing
+library(readr)#readr allows you to import csv and excel files. 
+library(RColorBrewer) #package with color blind friendly color schemes 
+library(ghibli) #another color blind friendly package 
+library(extrafont) #import different fonts into your graph 
+library(ggsignif) #plot significance data on a graph 
+library(ggprism) #make your R graphs look like prism
+library(plyr) #calculates summary data (mean, median, SD, SEM, etc.)
+library(tidyverse)
+library(ggpubr)
+```
 
-Finally, be sure to remove this message!
+Now let's import the data set. All original data files will be in the project folder "Original Data Files". THESE SHOULD NOT BE EDITED OUTSIDE OF THE R MARKDOWN
+```{r import data, echo=FALSE}
+original_data <- read.csv("Your file here", skip = 7) #use skip to skip the descriptive information about the sheet
+head(original_data)
+```
+Great that looks good and very messy now let's get it cleaned for analyses
+
+```{r clean data, echo=FALSE}
+cleandata <- original_data %>%
+  select(Sample.Name, Target.Name, C.)
+
+cleandata$group <- paste(cleandata$Sample.Name, cleandata$Target.Name, sep = "_")
+
+names(cleandata)[names(cleandata) == "C."] <- "Ct"
+head(cleandata)
+```
+
+Ok that looks good now let's analyze it
+```{r calculate ddCT, echo=FALSE}
+summarised_data <- cleandata %>%
+  mutate(Ct = as.numeric(Ct)) %>%
+  group_by(Sample.Name, Target.Name) %>%
+  summarise(mean_Ct = mean(Ct))
+
+summarised_data_final <- na.omit(summarised_data)
+summarised_data_final
+```
+
+```{r, separate and combine data}
+
+hkg = "Your Housekeeping Gene Here"
+goi_1 = "Your Gene of Interest Here"
+#If you have multiple genes of interest, make separate labels here
+ctrl_sample = "Your control sample here"
+
+test_data <- summarised_data_final %>%
+  filter(Target.Name == goi_1)
+
+ref_data <- summarised_data_final %>%
+  filter(Target.Name == hkg)
+
+combined_data <- left_join(test_data, ref_data, by = c("Sample.Name"))
+
+
+
+names(combined_data)[names(combined_data) == "mean_Ct.x"] <- "test_Ct"
+names(combined_data)[names(combined_data) == "mean_Ct.y"] <- "ref_Ct"
+```
+
+```{r calculations, echo=FALSE}
+combined_data <- mutate(combined_data, delta_Ct = ref_Ct - test_Ct)
+
+ggplot(combined_data, aes(x = Sample.Name, y = delta_Ct)) +
+  geom_point()
+
+treatment_summary <- combined_data %>%
+  group_by(Sample.Name) %>%
+  summarise(mean_delta_Ct = mean(delta_Ct))
+
+mean_control <- filter(treatment_summary, Sample.Name == ctrl_sample) %>% pull(mean_delta_Ct)
+
+combined_data <- combined_data %>% 
+  mutate(delta_delta_Ct = mean_control - delta_Ct)
+
+combined_data <- combined_data %>% 
+  mutate(log_delta_delta_Ct = 2^-(delta_delta_Ct))
+
+combined_data$group <- paste(combined_data$Sample.Name, combined_data$Target.Name.x, sep = "_")
+
+combined_data
+
+```
+
+```{r plot}
+level_order = c("Control", "Sample1", "Sample2", "NRT", "NTC")
+
+baseplot <- ggplot(na.omit(combined_data), aes(x=factor(Sample.Name, levels = level_order), y= log_delta_delta_Ct, fill=Sample.Name))
+
+  
+plot_final <- baseplot +
+  geom_col()+
+  xlab(NULL) + 
+  #no additional x axis label will be shown 
+  scale_y_continuous(name = "Fold Change", trans = "log10")+ 
+  #add y label 
+  ggtitle("Your title Here")+ 
+  scale_fill_ghibli_d("MarnieMedium1") +
+  theme_prism()
+
+plot_final
+```
+
+```{r save plot, include=FALSE}
+setwd ("Plots and Images/")
+ggsave("Whatever you want to call your file.png", plot = plot_final, device = png(), width = 10, height = 6, units = "in")
+```
